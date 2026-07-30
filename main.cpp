@@ -1,115 +1,10 @@
 #include <bits/stdc++.h>
 using namespace std;
 
-struct FastInput {
-    static constexpr size_t kBufSize = 1 << 20;
-    char buf[kBufSize];
-    size_t idx = 0, size = 0;
-
-    inline char get() {
-        if (idx >= size) {
-            size = fread(buf, 1, kBufSize, stdin);
-            idx = 0;
-            if (size == 0) return 0;
-        }
-        return buf[idx++];
-    }
-
-    inline void skip_spaces() {
-        char c;
-        while ((c = get())) {
-            if (!isspace(static_cast<unsigned char>(c))) {
-                --idx;
-                return;
-            }
-        }
-    }
-
-    bool read_int(int &out) {
-        skip_spaces();
-        char c = get();
-        if (!c) return false;
-        bool neg = false;
-        if (c == '-') {
-            neg = true;
-            c = get();
-        }
-        long long v = 0;
-        while (c && !isspace(static_cast<unsigned char>(c))) {
-            if (c < '0' || c > '9') return false;
-            v = v * 10 + (c - '0');
-            c = get();
-        }
-        out = neg ? -static_cast<int>(v) : static_cast<int>(v);
-        return true;
-    }
-
-    bool read_token(string_view &out) {
-        skip_spaces();
-        char c = get();
-        if (!c) return false;
-        if (c == '"') {
-            const char *start = buf + idx;
-            while ((c = get())) {
-                if (c == '"') {
-                    out = string_view(start, (buf + idx - 1) - start);
-                    return true;
-                }
-            }
-            return false;
-        }
-        const char *start = buf + idx - 1;
-        while ((c = get()) && !isspace(static_cast<unsigned char>(c))) {}
-        out = string_view(start, (buf + idx - (c ? 1 : 0)) - start);
-        if (c) --idx;
-        return true;
-    }
-};
-
-struct FastOutput {
-    static constexpr size_t kBufSize = 1 << 20;
-    char buf[kBufSize];
-    size_t idx = 0;
-
-    ~FastOutput() { flush(); }
-
-    inline void flush() {
-        if (idx) fwrite(buf, 1, idx, stdout);
-        idx = 0;
-    }
-
-    inline void put(char c) {
-        if (idx >= kBufSize) flush();
-        buf[idx++] = c;
-    }
-
-    inline void write(string_view s) {
-        for (char c : s) put(c);
-    }
-
-    inline void write_ll(long long x) {
-        if (x == 0) {
-            put('0');
-            return;
-        }
-        if (x < 0) {
-            put('-');
-            x = -x;
-        }
-        char tmp[32];
-        int n = 0;
-        while (x > 0) {
-            tmp[n++] = char('0' + x % 10);
-            x /= 10;
-        }
-        while (n--) put(tmp[n]);
-    }
-};
-
 struct Hash {
     using is_transparent = void;
-    size_t operator()(string_view s) const noexcept { return std::hash<string_view>{}(s); }
-    size_t operator()(const string &s) const noexcept { return std::hash<string_view>{}(s); }
+    size_t operator()(string_view s) const noexcept { return hash<string_view>{}(s); }
+    size_t operator()(const string &s) const noexcept { return hash<string_view>{}(s); }
 };
 
 struct Eq {
@@ -126,18 +21,43 @@ struct Value {
     string sv;
 };
 
-static inline bool parse_int_sv(string_view sv, long long &out) {
-    if (sv.empty()) return false;
+static inline void skip_spaces(const string &line, size_t &i) {
+    while (i < line.size() && line[i] == ' ') ++i;
+}
+
+static inline bool read_word(const string &line, size_t &i, string_view &out) {
+    skip_spaces(line, i);
+    if (i >= line.size()) return false;
+    size_t j = i;
+    while (j < line.size() && line[j] != ' ') ++j;
+    out = string_view(line.data() + i, j - i);
+    i = j;
+    return true;
+}
+
+static inline bool read_quoted(const string &line, size_t &i, string &out) {
+    skip_spaces(line, i);
+    if (i >= line.size() || line[i] != '"') return false;
+    size_t j = i + 1;
+    while (j < line.size() && line[j] != '"') ++j;
+    if (j >= line.size()) return false;
+    out.assign(line.data() + i + 1, j - i - 1);
+    i = j + 1;
+    return true;
+}
+
+static inline bool parse_int(string_view s, long long &out) {
+    if (s.empty()) return false;
     size_t i = 0;
     bool neg = false;
-    if (sv[0] == '-') {
+    if (s[0] == '-') {
         neg = true;
         i = 1;
-        if (i == sv.size()) return false;
+        if (i == s.size()) return false;
     }
     long long v = 0;
-    for (; i < sv.size(); ++i) {
-        char c = sv[i];
+    for (; i < s.size(); ++i) {
+        char c = s[i];
         if (c < '0' || c > '9') return false;
         v = v * 10 + (c - '0');
     }
@@ -149,49 +69,51 @@ int main() {
     ios::sync_with_stdio(false);
     cin.tie(nullptr);
 
-    FastInput in;
-    FastOutput out;
-
     int n;
-    if (!in.read_int(n)) return 0;
+    if (!(cin >> n)) return 0;
+    string line;
+    getline(cin, line);
 
     unordered_map<string, vector<Value>, Hash, Eq> vars;
     vars.reserve(1 << 16);
-
     vector<vector<string>> scope_names(1);
     vector<unordered_set<string, Hash, Eq>> scope_used(1);
-    scope_names[0].reserve(128);
-    scope_used[0].reserve(128);
     int depth = 0;
 
-    auto find_var = [&](string_view name) -> Value* {
+    auto lookup = [&](string_view name) -> Value* {
         auto it = vars.find(name);
         if (it == vars.end() || it->second.empty()) return nullptr;
         return &it->second.back();
     };
 
-    for (int i = 0; i < n; ++i) {
+    for (int tc = 0; tc < n; ++tc) {
+        getline(cin, line);
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t i = 0;
         string_view cmd;
-        if (!in.read_token(cmd)) break;
         bool ok = true;
+        if (!read_word(line, i, cmd)) {
+            cout << "Invalid operation\n";
+            continue;
+        }
 
         if (cmd == "Indent") {
-            ++depth;
-            if ((int)scope_names.size() <= depth) {
-                scope_names.emplace_back();
-                scope_used.emplace_back();
-                scope_names.back().reserve(128);
-                scope_used.back().reserve(128);
-            } else {
-                scope_names[depth].clear();
-                scope_used[depth].clear();
+            skip_spaces(line, i);
+            if (i != line.size()) ok = false;
+            else {
+                ++depth;
+                if ((int)scope_names.size() <= depth) {
+                    scope_names.emplace_back();
+                    scope_used.emplace_back();
+                }
             }
         } else if (cmd == "Dedent") {
-            if (depth == 0) ok = false;
+            skip_spaces(line, i);
+            if (i != line.size() || depth == 0) ok = false;
             else {
                 for (const string &name : scope_names[depth]) {
                     auto it = vars.find(name);
-                    if (it != vars.end() && !it->second.empty()) {
+                    if (it != vars.end()) {
                         it->second.pop_back();
                         if (it->second.empty()) vars.erase(it);
                     }
@@ -201,84 +123,92 @@ int main() {
                 --depth;
             }
         } else if (cmd == "Declare") {
-            string_view type, name, value;
-            if (!in.read_token(type) || !in.read_token(name) || !in.read_token(value)) ok = false;
+            string_view type, name;
+            if (!read_word(line, i, type) || !read_word(line, i, name)) ok = false;
+            else if (scope_used[depth].find(name) != scope_used[depth].end()) ok = false;
             else {
-                auto &used = scope_used[depth];
-                if (used.find(name) != used.end()) ok = false;
-                else {
-                    auto key = string(name);
-                    used.emplace(key);
-                    scope_names[depth].emplace_back(key);
-                    auto &stk = vars[key];
-                    Value v;
-                    if (type == "int") {
+                Value v;
+                if (type == "int") {
+                    string_view tok;
+                    if (!read_word(line, i, tok)) ok = false;
+                    else {
                         long long x;
-                        if (!parse_int_sv(value, x)) ok = false;
+                        if (!parse_int(tok, x)) ok = false;
                         else {
                             v.is_int = true;
                             v.iv = x;
-                            stk.push_back(std::move(v));
-                        }
-                    } else if (type == "string") {
-                        v.is_int = false;
-                        v.sv = string(value);
-                        stk.push_back(std::move(v));
-                    } else ok = false;
-                    if (!ok) {
-                        used.erase(key);
-                        scope_names[depth].pop_back();
-                        if (!stk.empty()) {
-                            stk.pop_back();
-                            if (stk.empty()) vars.erase(key);
                         }
                     }
+                } else if (type == "string") {
+                    if (!read_quoted(line, i, v.sv)) ok = false;
+                    else v.is_int = false;
+                } else ok = false;
+
+                skip_spaces(line, i);
+                if (ok && i != line.size()) ok = false;
+                if (ok) {
+                    string key(name);
+                    scope_used[depth].insert(key);
+                    scope_names[depth].push_back(key);
+                    vars[key].push_back(std::move(v));
                 }
             }
         } else if (cmd == "Add") {
             string_view res, a, b;
-            if (!in.read_token(res) || !in.read_token(a) || !in.read_token(b)) ok = false;
+            if (!read_word(line, i, res) || !read_word(line, i, a) || !read_word(line, i, b)) ok = false;
             else {
-                Value *rv = find_var(res);
-                Value *av = find_var(a);
-                Value *bv = find_var(b);
-                if (!rv || !av || !bv) ok = false;
-                else if (rv->is_int != av->is_int || rv->is_int != bv->is_int) ok = false;
-                else if (rv->is_int) rv->iv = av->iv + bv->iv;
-                else rv->sv = av->sv + bv->sv;
+                skip_spaces(line, i);
+                if (i != line.size()) ok = false;
+                else {
+                    Value *rv = lookup(res);
+                    Value *av = lookup(a);
+                    Value *bv = lookup(b);
+                    if (!rv || !av || !bv) ok = false;
+                    else if (rv->is_int != av->is_int || rv->is_int != bv->is_int) ok = false;
+                    else if (rv->is_int) rv->iv = av->iv + bv->iv;
+                    else rv->sv = av->sv + bv->sv;
+                }
             }
         } else if (cmd == "SelfAdd") {
-            string_view name, value;
-            if (!in.read_token(name) || !in.read_token(value)) ok = false;
+            string_view name;
+            if (!read_word(line, i, name)) ok = false;
             else {
-                Value *v = find_var(name);
+                Value *v = lookup(name);
                 if (!v) ok = false;
                 else if (v->is_int) {
-                    long long x;
-                    if (!parse_int_sv(value, x)) ok = false;
-                    else v->iv += x;
+                    string_view tok;
+                    if (!read_word(line, i, tok)) ok = false;
+                    else {
+                        long long x;
+                        if (!parse_int(tok, x)) ok = false;
+                        else v->iv += x;
+                    }
+                    skip_spaces(line, i);
+                    if (ok && i != line.size()) ok = false;
                 } else {
-                    v->sv.append(value.data(), value.size());
+                    if (!read_quoted(line, i, v->sv)) ok = false;
+                    skip_spaces(line, i);
+                    if (ok && i != line.size()) ok = false;
                 }
             }
         } else if (cmd == "Print") {
             string_view name;
-            if (!in.read_token(name)) ok = false;
+            if (!read_word(line, i, name)) ok = false;
             else {
-                Value *v = find_var(name);
-                if (!v) ok = false;
+                skip_spaces(line, i);
+                if (i != line.size()) ok = false;
                 else {
-                    out.write(name);
-                    out.put(':');
-                    if (v->is_int) out.write_ll(v->iv);
-                    else out.write(v->sv);
-                    out.put('\n');
+                    Value *v = lookup(name);
+                    if (!v) ok = false;
+                    else if (v->is_int) cout << name << ':' << v->iv << '\n';
+                    else cout << name << ':' << v->sv << '\n';
                 }
             }
-        } else ok = false;
+        } else {
+            ok = false;
+        }
 
-        if (!ok) out.write("Invalid operation\n");
+        if (!ok) cout << "Invalid operation\n";
     }
-
     return 0;
 }
