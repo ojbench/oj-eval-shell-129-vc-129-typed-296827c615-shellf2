@@ -1,6 +1,12 @@
 #include <bits/stdc++.h>
 using namespace std;
 
+struct Value {
+    bool is_int = true;
+    long long iv = 0;
+    string sv;
+};
+
 struct Hash {
     using is_transparent = void;
     size_t operator()(string_view s) const noexcept { return hash<string_view>{}(s); }
@@ -15,33 +21,27 @@ struct Eq {
     bool operator()(string_view a, const string &b) const noexcept { return a == string_view(b); }
 };
 
-struct Value {
-    bool is_int = true;
-    long long iv = 0;
-    string sv;
-};
-
-static inline void skip_spaces(const string &line, size_t &i) {
-    while (i < line.size() && line[i] == ' ') ++i;
+static inline void skip_spaces(const string &s, size_t &i) {
+    while (i < s.size() && s[i] == ' ') ++i;
 }
 
-static inline bool read_word(const string &line, size_t &i, string_view &out) {
-    skip_spaces(line, i);
-    if (i >= line.size()) return false;
+static inline bool read_word(const string &s, size_t &i, string_view &out) {
+    skip_spaces(s, i);
+    if (i >= s.size()) return false;
     size_t j = i;
-    while (j < line.size() && line[j] != ' ') ++j;
-    out = string_view(line.data() + i, j - i);
+    while (j < s.size() && s[j] != ' ') ++j;
+    out = string_view(s.data() + i, j - i);
     i = j;
     return true;
 }
 
-static inline bool read_quoted(const string &line, size_t &i, string &out) {
-    skip_spaces(line, i);
-    if (i >= line.size() || line[i] != '"') return false;
+static inline bool read_quoted(const string &s, size_t &i, string &out) {
+    skip_spaces(s, i);
+    if (i >= s.size() || s[i] != '"') return false;
     size_t j = i + 1;
-    while (j < line.size() && line[j] != '"') ++j;
-    if (j >= line.size()) return false;
-    out.assign(line.data() + i + 1, j - i - 1);
+    while (j < s.size() && s[j] != '"') ++j;
+    if (j >= s.size()) return false;
+    out.assign(s.data() + i + 1, j - i - 1);
     i = j + 1;
     return true;
 }
@@ -87,11 +87,12 @@ int main() {
     };
 
     for (int tc = 0; tc < n; ++tc) {
-        getline(cin, line);
+        if (!getline(cin, line)) break;
         if (!line.empty() && line.back() == '\r') line.pop_back();
         size_t i = 0;
         string_view cmd;
         bool ok = true;
+
         if (!read_word(line, i, cmd)) {
             cout << "Invalid operation\n";
             continue;
@@ -106,6 +107,8 @@ int main() {
                     scope_names.emplace_back();
                     scope_used.emplace_back();
                 }
+                scope_names[depth].clear();
+                scope_used[depth].clear();
             }
         } else if (cmd == "Dedent") {
             skip_spaces(line, i);
@@ -142,8 +145,9 @@ int main() {
                 } else if (type == "string") {
                     if (!read_quoted(line, i, v.sv)) ok = false;
                     else v.is_int = false;
-                } else ok = false;
-
+                } else {
+                    ok = false;
+                }
                 skip_spaces(line, i);
                 if (ok && i != line.size()) ok = false;
                 if (ok) {
