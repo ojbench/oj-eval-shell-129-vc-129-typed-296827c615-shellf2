@@ -16,9 +16,8 @@ struct FastInput {
     }
 
     inline void skip_spaces() {
-        while (true) {
-            char c = get();
-            if (!c) return;
+        char c;
+        while ((c = get())) {
             if (!isspace(static_cast<unsigned char>(c))) {
                 --idx;
                 return;
@@ -36,7 +35,6 @@ struct FastInput {
             c = get();
         }
         long long v = 0;
-        if (!c) return false;
         while (c && !isspace(static_cast<unsigned char>(c))) {
             if (c < '0' || c > '9') return false;
             v = v * 10 + (c - '0');
@@ -52,24 +50,19 @@ struct FastInput {
         if (!c) return false;
         if (c == '"') {
             const char *start = buf + idx;
-            while (true) {
-                c = get();
-                if (!c) return false;
+            while ((c = get())) {
                 if (c == '"') {
                     out = string_view(start, (buf + idx - 1) - start);
                     return true;
                 }
             }
+            return false;
         }
         const char *start = buf + idx - 1;
-        while (true) {
-            c = get();
-            if (!c || isspace(static_cast<unsigned char>(c))) {
-                out = string_view(start, (buf + idx - (c ? 1 : 0)) - start);
-                if (c) --idx;
-                return true;
-            }
-        }
+        while ((c = get()) && !isspace(static_cast<unsigned char>(c))) {}
+        out = string_view(start, (buf + idx - (c ? 1 : 0)) - start);
+        if (c) --idx;
+        return true;
     }
 };
 
@@ -133,11 +126,6 @@ struct Value {
     string sv;
 };
 
-struct Binding {
-    int scope = 0;
-    Value value;
-};
-
 static inline bool parse_int_sv(string_view sv, long long &out) {
     if (sv.empty()) return false;
     size_t i = 0;
@@ -167,18 +155,19 @@ int main() {
     int n;
     if (!in.read_int(n)) return 0;
 
-    vector<unordered_map<string, Binding, Hash, Eq>> table(1);
-    table[0].reserve(1024);
+    unordered_map<string, vector<Value>, Hash, Eq> vars;
+    vars.reserve(1 << 16);
+
     vector<vector<string>> scope_names(1);
-    scope_names[0].reserve(1024);
+    vector<unordered_set<string, Hash, Eq>> scope_used(1);
+    scope_names[0].reserve(128);
+    scope_used[0].reserve(128);
     int depth = 0;
 
-    auto find_var = [&](string_view name) -> Binding* {
-        for (int d = depth; d >= 0; --d) {
-            auto it = table[d].find(name);
-            if (it != table[d].end()) return &it->second;
-        }
-        return nullptr;
+    auto find_var = [&](string_view name) -> Value* {
+        auto it = vars.find(name);
+        if (it == vars.end() || it->second.empty()) return nullptr;
+        return &it->second.back();
     };
 
     for (int i = 0; i < n; ++i) {
@@ -188,95 +177,105 @@ int main() {
 
         if (cmd == "Indent") {
             ++depth;
-            if ((int)table.size() <= depth) {
-                table.emplace_back();
+            if ((int)scope_names.size() <= depth) {
                 scope_names.emplace_back();
-                table.back().reserve(1024);
-                scope_names.back().reserve(1024);
+                scope_used.emplace_back();
+                scope_names.back().reserve(128);
+                scope_used.back().reserve(128);
             } else {
                 scope_names[depth].clear();
-                table[depth].clear();
+                scope_used[depth].clear();
             }
         } else if (cmd == "Dedent") {
             if (depth == 0) ok = false;
             else {
                 for (const string &name : scope_names[depth]) {
-                    auto it = table[depth].find(name);
-                    if (it != table[depth].end()) table[depth].erase(it);
+                    auto it = vars.find(name);
+                    if (it != vars.end() && !it->second.empty()) {
+                        it->second.pop_back();
+                        if (it->second.empty()) vars.erase(it);
+                    }
                 }
                 scope_names[depth].clear();
-                table[depth].clear();
+                scope_used[depth].clear();
                 --depth;
             }
         } else if (cmd == "Declare") {
             string_view type, name, value;
             if (!in.read_token(type) || !in.read_token(name) || !in.read_token(value)) ok = false;
             else {
-                auto &scope = table[depth];
-                if (scope.find(name) != scope.end()) ok = false;
+                auto &used = scope_used[depth];
+                if (used.find(name) != used.end()) ok = false;
                 else {
-                    Binding b;
-                    b.scope = depth;
+                    auto key = string(name);
+                    used.emplace(key);
+                    scope_names[depth].emplace_back(key);
+                    auto &stk = vars[key];
+                    Value v;
                     if (type == "int") {
-                        long long v;
-                        if (!parse_int_sv(value, v)) ok = false;
+                        long long x;
+                        if (!parse_int_sv(value, x)) ok = false;
                         else {
-                            b.value.is_int = true;
-                            b.value.iv = v;
-                            scope.emplace(string(name), std::move(b));
-                            scope_names[depth].push_back(string(name));
+                            v.is_int = true;
+                            v.iv = x;
+                            stk.push_back(std::move(v));
                         }
                     } else if (type == "string") {
-                        b.value.is_int = false;
-                        b.value.sv = string(value);
-                        scope.emplace(string(name), std::move(b));
-                        scope_names[depth].push_back(string(name));
+                        v.is_int = false;
+                        v.sv = string(value);
+                        stk.push_back(std::move(v));
                     } else ok = false;
+                    if (!ok) {
+                        used.erase(key);
+                        scope_names[depth].pop_back();
+                        if (!stk.empty()) {
+                            stk.pop_back();
+                            if (stk.empty()) vars.erase(key);
+                        }
+                    }
                 }
             }
         } else if (cmd == "Add") {
             string_view res, a, b;
             if (!in.read_token(res) || !in.read_token(a) || !in.read_token(b)) ok = false;
             else {
-                Binding *rb = find_var(res);
-                Binding *ab = find_var(a);
-                Binding *bb = find_var(b);
-                if (!rb || !ab || !bb) ok = false;
-                else if (rb->value.is_int != ab->value.is_int || rb->value.is_int != bb->value.is_int) ok = false;
-                else if (rb->value.is_int) rb->value.iv = ab->value.iv + bb->value.iv;
-                else rb->value.sv = ab->value.sv + bb->value.sv;
+                Value *rv = find_var(res);
+                Value *av = find_var(a);
+                Value *bv = find_var(b);
+                if (!rv || !av || !bv) ok = false;
+                else if (rv->is_int != av->is_int || rv->is_int != bv->is_int) ok = false;
+                else if (rv->is_int) rv->iv = av->iv + bv->iv;
+                else rv->sv = av->sv + bv->sv;
             }
         } else if (cmd == "SelfAdd") {
             string_view name, value;
             if (!in.read_token(name) || !in.read_token(value)) ok = false;
             else {
-                Binding *v = find_var(name);
+                Value *v = find_var(name);
                 if (!v) ok = false;
-                else if (v->value.is_int) {
+                else if (v->is_int) {
                     long long x;
                     if (!parse_int_sv(value, x)) ok = false;
-                    else v->value.iv += x;
+                    else v->iv += x;
                 } else {
-                    v->value.sv += string(value);
+                    v->sv.append(value.data(), value.size());
                 }
             }
         } else if (cmd == "Print") {
             string_view name;
             if (!in.read_token(name)) ok = false;
             else {
-                Binding *v = find_var(name);
+                Value *v = find_var(name);
                 if (!v) ok = false;
                 else {
                     out.write(name);
                     out.put(':');
-                    if (v->value.is_int) out.write_ll(v->value.iv);
-                    else out.write(v->value.sv);
+                    if (v->is_int) out.write_ll(v->iv);
+                    else out.write(v->sv);
                     out.put('\n');
                 }
             }
-        } else {
-            ok = false;
-        }
+        } else ok = false;
 
         if (!ok) out.write("Invalid operation\n");
     }
